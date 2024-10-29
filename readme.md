@@ -49,6 +49,10 @@ cd carla-av-simulation
 ```bash
 pip install -r requirements.txt
 ```
+4. Add the Config file
+```bash
+{CarlaFolder}/Unreal/CarlaUE4/Config/CarlaSettings.ini
+```
 
 ## Usage
 
