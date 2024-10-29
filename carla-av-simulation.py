@@ -689,7 +689,127 @@ class AVSimulation:
         except Exception as e:
             logging.error(f"Error during data export: {str(e)}")
             raise SimulationError(f"Data export failed: {str(e)}")
-
+    def visualize_data(self):
+        """
+        Visualize sensor data in real-time using Pygame.
+        """
+        try:
+            surface = None
+            
+            # Process camera image
+            if not self.image_queue.empty():
+                frame, image = self.image_queue.get()
+                
+                # Convert numpy array to pygame surface
+                image = np.rot90(image)  # Rotate image to correct orientation
+                image = pygame.surfarray.make_surface(image)
+                
+                # Scale image to fit display if needed
+                display_size = self.display.get_size()
+                image_size = image.get_size()
+                
+                scale_factor = min(display_size[0] / image_size[0], 
+                                 display_size[1] * 0.7 / image_size[1])  # Leave space for LiDAR
+                
+                if scale_factor != 1:
+                    new_size = (int(image_size[0] * scale_factor), 
+                              int(image_size[1] * scale_factor))
+                    image = pygame.transform.scale(image, new_size)
+                
+                # Display camera image at the top
+                self.display.blit(image, (0, 0))
+            
+            # Process and visualize LiDAR data
+            if not self.lidar_queue.empty():
+                frame, points = self.lidar_queue.get()
+                
+                # Create LiDAR visualization surface
+                lidar_surface = pygame.Surface((400, 400))
+                lidar_surface.fill((0, 0, 0))
+                
+                # Project points to 2D and colorize based on height
+                if points.size > 0:
+                    # Extract x, y coordinates and normalize
+                    points_2d = points[:, :2]  # Get x, y coordinates
+                    points_2d = points_2d * 10  # Scale for visibility
+                    points_2d += np.array([200, 200])  # Center in display
+                    
+                    # Colorize based on height (z coordinate)
+                    heights = points[:, 2]
+                    normalized_heights = ((heights - heights.min()) / 
+                                       (heights.max() - heights.min() + 1e-6))
+                    
+                    # Draw points
+                    for i, (x, y) in enumerate(points_2d):
+                        if 0 <= x < 400 and 0 <= y < 400:
+                            # Color gradient from blue (low) to red (high)
+                            color = (int(255 * normalized_heights[i]),  # R
+                                   0,                                   # G
+                                   int(255 * (1 - normalized_heights[i])))  # B
+                            pygame.draw.circle(lidar_surface, color, (int(x), int(y)), 2)
+                
+                # Display LiDAR visualization at the bottom
+                self.display.blit(lidar_surface, (0, self.display.get_height() - 400))
+            
+            # Process and visualize radar data
+            if not self.radar_queue.empty():
+                frame, radar_data = self.radar_queue.get()
+                
+                # Create radar visualization surface
+                radar_surface = pygame.Surface((200, 200))
+                radar_surface.fill((0, 0, 0))
+                
+                if radar_data.size > 0:
+                    # Draw radar points
+                    for detection in radar_data:
+                        velocity, azimuth, altitude, depth = detection
+                        
+                        # Convert polar coordinates to Cartesian
+                        x = depth * math.cos(azimuth) * 2  # Scale for visibility
+                        y = depth * math.sin(azimuth) * 2
+                        
+                        # Center and scale coordinates
+                        screen_x = int(100 + x)
+                        screen_y = int(100 + y)
+                        
+                        if 0 <= screen_x < 200 and 0 <= screen_y < 200:
+                            # Color based on velocity (red for approaching, green for moving away)
+                            color = (255, 0, 0) if velocity < 0 else (0, 255, 0)
+                            pygame.draw.circle(radar_surface, color, (screen_x, screen_y), 3)
+                
+                # Display radar visualization in bottom-right corner
+                self.display.blit(radar_surface, (self.display.get_width() - 200, 
+                                                self.display.get_height() - 200))
+            
+            # Add text overlay with basic info
+            try:
+                font = pygame.font.Font(None, 36)
+                text_color = (255, 255, 255)
+                
+                # Display frame counts
+                camera_text = f"Camera Frames: {len(self.sensor_data['camera'])}"
+                lidar_text = f"LiDAR Frames: {len(self.sensor_data['lidar'])}"
+                radar_text = f"Radar Frames: {len(self.sensor_data['radar'])}"
+                
+                camera_surface = font.render(camera_text, True, text_color)
+                lidar_surface = font.render(lidar_text, True, text_color)
+                radar_surface = font.render(radar_text, True, text_color)
+                
+                # Position text in top-right corner
+                self.display.blit(camera_surface, (self.display.get_width() - 300, 10))
+                self.display.blit(lidar_surface, (self.display.get_width() - 300, 50))
+                self.display.blit(radar_surface, (self.display.get_width() - 300, 90))
+                
+            except Exception as e:
+                logging.warning(f"Failed to render text overlay: {str(e)}")
+            
+            # Update display
+            pygame.display.flip()
+            
+        except Exception as e:
+            logging.error(f"Error in visualization: {str(e)}")
+            # Don't raise the error to prevent simulation from stopping
+            pass
 def main():
     simulation = None
     try:
