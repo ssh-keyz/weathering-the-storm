@@ -609,13 +609,25 @@ class AVSimulation:
                 except Exception as e:
                     logging.error(f"Failed to export camera data: {str(e)}")
             
-            # Export LiDAR points
+            # Export LiDAR points with serializable transforms
             if self.sensor_data['lidar']:
                 try:
                     lidar_data = {
                         'timestamps': [frame['timestamp'] for frame in self.sensor_data['lidar']],
                         'points': [frame['points'] for frame in self.sensor_data['lidar']],
-                        'transforms': [frame['transform'] for frame in self.sensor_data['lidar']]
+                        # Convert Transform objects to dictionaries
+                        'transforms': [{
+                            'location': {
+                                'x': frame['transform'].location.x,
+                                'y': frame['transform'].location.y,
+                                'z': frame['transform'].location.z
+                            },
+                            'rotation': {
+                                'pitch': frame['transform'].rotation.pitch,
+                                'yaw': frame['transform'].rotation.yaw,
+                                'roll': frame['transform'].rotation.roll
+                            }
+                        } for frame in self.sensor_data['lidar']]
                     }
                     
                     with open(output_dir / f'lidar_data_{timestamp}.pkl', 'wb') as f:
