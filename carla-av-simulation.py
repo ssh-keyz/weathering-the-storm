@@ -288,13 +288,19 @@ class AVSimulation:
         vehicles = []
         pedestrians = []
         controllers = []
-
+        
         try:
             spawn_points = self.map.get_spawn_points()
             if not spawn_points:
                 raise SimulationError("No spawn points found in map")
-
-            # Spawn vehicles
+            
+            # Shuffle spawn points
+            random.shuffle(spawn_points)
+            
+            # Keep track of used spawn points
+            used_spawn_points = set()
+            
+            # Spawn vehicles with collision checking
             vehicle_bps = self.world.get_blueprint_library().filter('vehicle.*')
             for _ in range(num_vehicles):
                 try:
@@ -302,60 +308,85 @@ class AVSimulation:
                     if blueprint.has_attribute('color'):
                         color = random.choice(blueprint.get_attribute('color').recommended_values)
                         blueprint.set_attribute('color', color)
-
-                    spawn_point = random.choice(spawn_points)
+                    
+                    # Find an unused spawn point
+                    spawn_point = None
+                    for point in spawn_points:
+                        if point not in used_spawn_points:
+                            spawn_point = point
+                            break
+                    
+                    if spawn_point is None:
+                        logging.warning("No more available spawn points for vehicles")
+                        break
+                    
                     vehicle = self.world.try_spawn_actor(blueprint, spawn_point)
-
                     if vehicle is not None:
+                        used_spawn_points.add(spawn_point)
                         vehicle.set_autopilot(True)
                         vehicles.append(vehicle)
                         self.active_actors.append(vehicle)
+                        
+                        # Add some randomization to vehicle behavior
+                        traffic_manager = self.client.get_trafficmanager()
+                        traffic_manager.global_percentage_speed_difference(random.uniform(-20, 10))
+                        traffic_manager.set_random_device_seed(random.randint(0, 1000))
+                        
                 except Exception as e:
                     logging.warning(f"Failed to spawn vehicle: {str(e)}")
                     continue
-
+            
             logging.info(f"Successfully spawned {len(vehicles)} vehicles")
-
-            # Spawn pedestrians
+            
+            # Spawn pedestrians with collision checking
             pedestrian_bps = self.world.get_blueprint_library().filter('walker.pedestrian.*')
             controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
-
+            
             for _ in range(num_pedestrians):
                 try:
-                    spawn_point = carla.Transform(
-                        self.world.get_random_location_from_navigation(),
-                        carla.Rotation()
-                    )
-
-                    # Spawn pedestrian
-                    blueprint = random.choice(pedestrian_bps)
-                    pedestrian = self.world.try_spawn_actor(blueprint, spawn_point)
-
-                    if pedestrian is not None:
-                        # Spawn controller
-                        controller = self.world.spawn_actor(controller_bp, carla.Transform(), attach_to=pedestrian)
-                        controller.start()
-                        controller.set_max_speed(1.4)
-
-                        pedestrians.append(pedestrian)
-                        controllers.append(controller)
-                        self.active_actors.extend([pedestrian, controller])
-
+                    # Try multiple times to find a valid spawn point
+                    for _ in range(5):  # Try 5 times per pedestrian
+                        spawn_point = carla.Transform(
+                            self.world.get_random_location_from_navigation(),
+                            carla.Rotation()
+                        )
+                        
+                        # Check if location is valid
+                        if self.world.get_map().get_waypoint(spawn_point.location, project_to_road=False):
+                            blueprint = random.choice(pedestrian_bps)
+                            pedestrian = self.world.try_spawn_actor(blueprint, spawn_point)
+                            
+                            if pedestrian is not None:
+                                # Spawn controller
+                                controller = self.world.spawn_actor(controller_bp, carla.Transform(), attach_to=pedestrian)
+                                controller.start()
+                                controller.set_max_speed(1.4)
+                                
+                                pedestrians.append(pedestrian)
+                                controllers.append(controller)
+                                self.active_actors.extend([pedestrian, controller])
+                                break
+                
                 except Exception as e:
                     logging.warning(f"Failed to spawn pedestrian: {str(e)}")
                     continue
-
+            
             logging.info(f"Successfully spawned {len(pedestrians)} pedestrians")
-
+            
+            # Wait a moment for physics to settle
+            time.sleep(0.5)
+            
             # Start pedestrian movement
             for controller in controllers:
                 try:
                     controller.go_to_location(self.world.get_random_location_from_navigation())
+                    # Add some randomization to pedestrian behavior
+                    controller.set_max_speed(random.uniform(0.8, 1.8))
                 except Exception as e:
                     logging.warning(f"Failed to set pedestrian destination: {str(e)}")
-
+            
             return vehicles, pedestrians
-
+            
         except Exception as e:
             logging.error(f"Error in setup_traffic: {str(e)}")
             self.cleanup_actors()
@@ -453,19 +484,38 @@ class AVSimulation:
             weather = self.setup_weather()
             logging.info("Weather configured successfully")
 
-            # Spawn ego vehicle
+            # Spawn ego vehicle with collision checking
             blueprint = self.world.get_blueprint_library().find('vehicle.tesla.model3')
             spawn_points = self.map.get_spawn_points()
+
             if not spawn_points:
                 raise SimulationError("No spawn points available")
 
-            vehicle = self.world.spawn_actor(blueprint, random.choice(spawn_points))
-            if vehicle is None:
-                raise SimulationError("Failed to spawn ego vehicle")
+            # Try different spawn points until finding one without collision
+            spawn_success = False
+            random.shuffle(spawn_points)  # Randomize spawn points
+
+            for spawn_point in spawn_points:
+                try:
+                    # Check if spawn point is clear
+                    if self.world.get_spectator().get_transform().location.distance(spawn_point.location) > 2.0:
+                        vehicle = self.world.try_spawn_actor(blueprint, spawn_point)
+                        if vehicle is not None:
+                            spawn_success = True
+                            break
+                except Exception as e:
+                    logging.warning(f"Failed to spawn at point {spawn_point}: {str(e)}")
+                    continue
+
+            if not spawn_success:
+                raise SimulationError("Could not find a clear spawn point for ego vehicle")
 
             self.active_actors.append(vehicle)
             vehicle.set_autopilot(True)
-            logging.info("Ego vehicle spawned successfully")
+            logging.info(f"Ego vehicle spawned successfully at {spawn_point}")
+
+            # Wait a moment for physics to settle
+            time.sleep(0.5)
 
             # Setup traffic
             traffic_vehicles, pedestrians = self.setup_traffic()
