@@ -463,12 +463,12 @@ class AVSimulation:
         except Exception as e:
             logging.error(f"Error during cleanup: {str(e)}")
 
-    def run_simulation(self, config_name, duration_seconds=60):
+    def run_simulation(self, config_name, duration_seconds=600):
         try:
             # Enable synchronous mode
             settings = self.world.get_settings()
             settings.synchronous_mode = True
-            settings.fixed_delta_seconds = 0.05  # 20 FPS
+            settings.fixed_delta_seconds = 0.025  # 40 FPS
             self.world.apply_settings(settings)
             
             # Setup traffic manager
@@ -485,7 +485,9 @@ class AVSimulation:
             logging.info("Weather configured successfully")
 
             # Spawn ego vehicle with collision checking
-            blueprint = self.world.get_blueprint_library().find('vehicle.tesla.model3')
+            # blueprint = self.world.get_blueprint_library().find('vehicle.tesla.model3')
+            blueprint = self.world.get_blueprint_library().find('vehicle.yamaha.yzf')
+            # blueprint = self.world.get_blueprint_library().find('vehicle.mercedes.sprinter')
             spawn_points = self.map.get_spawn_points()
 
             if not spawn_points:
@@ -550,6 +552,8 @@ class AVSimulation:
                     break
                 
         finally:
+            self.export_data(".")
+
             # Disable synchronous mode when done
             settings = self.world.get_settings()
             settings.synchronous_mode = False
