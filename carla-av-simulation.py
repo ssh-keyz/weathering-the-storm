@@ -80,6 +80,42 @@ class AVSimulation:
         except Exception as e:
             logging.error(f"Failed to initialize AVSimulation: {str(e)}")
             raise
+    def setup_weather(self):
+        try:
+            # Set up rainy weather conditions
+            weather = carla.WeatherParameters(
+                cloudiness=100.0,
+                precipitation=100.0,
+                precipitation_deposits=100.0,
+                wind_intensity=50.0,
+                fog_density=20.0,
+                wetness=100.0,
+                sun_altitude_angle=45.0
+            )
+
+            # Apply weather settings
+            self.world.set_weather(weather)
+
+            # Store weather state
+            self.sensor_data['weather'].append({
+                'timestamp': datetime.now().isoformat(),
+                'params': {
+                    'cloudiness': weather.cloudiness,
+                    'precipitation': weather.precipitation,
+                    'precipitation_deposits': weather.precipitation_deposits,
+                    'wind_intensity': weather.wind_intensity,
+                    'fog_density': weather.fog_density,
+                    'wetness': weather.wetness,
+                    'sun_altitude_angle': weather.sun_altitude_angle
+                }
+            })
+
+            logging.info("Weather configured: Heavy rain conditions")
+            return weather
+
+        except Exception as e:
+            logging.error(f"Failed to setup weather: {str(e)}")
+            raise SimulationError(f"Weather setup failed: {str(e)}")
 
     def setup_traffic(self, num_vehicles=50, num_pedestrians=30):
         vehicles = []
