@@ -29,6 +29,21 @@ logging.basicConfig(
 class SimulationError(Exception):
     """Custom exception for simulation-specific errors"""
     pass
+    class SensorConfiguration:
+        """
+        Class to hold sensor configuration specifications.
+        """
+        def __init__(self, name, sensors_specs):
+            """
+            Initialize a sensor configuration.
+
+            Args:
+                name (str): Name of the configuration
+                sensors_specs (list): List of tuples (blueprint_name, attributes, transform)
+                    where attributes is a dict of sensor attributes
+            """
+            self.name = name
+            self.sensors_specs = sensors_specs
 
 class AVSimulation:
     def __init__(self):
@@ -96,7 +111,7 @@ class AVSimulation:
             config = self.sensor_configurations[config_name]
             logging.info(f"Setting up {config_name} sensor configuration")
 
-            for blueprint_name, attributes, transform in config.sensor_configurations[config_name].sensors_specs:
+            for blueprint_name, attributes, transform in config.sensors_specs:
                 try:
                     # Get the blueprint
                     blueprint = self.world.get_blueprint_library().find(blueprint_name)
