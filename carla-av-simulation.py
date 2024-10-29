@@ -290,15 +290,18 @@ class AVSimulation:
         controllers = []
         
         try:
+            # Set up traffic manager
+            traffic_manager = self.client.get_trafficmanager(8000)  # Port 8000
+            traffic_manager.set_synchronous_mode(True)
+            traffic_manager.set_random_device_seed(0)
+            traffic_manager.global_percentage_speed_difference(0)
+            
             spawn_points = self.map.get_spawn_points()
             if not spawn_points:
                 raise SimulationError("No spawn points found in map")
             
             # Shuffle spawn points
             random.shuffle(spawn_points)
-            
-            # Keep track of used spawn points
-            used_spawn_points = set()
             
             # Spawn vehicles with collision checking
             vehicle_bps = self.world.get_blueprint_library().filter('vehicle.*')
@@ -309,33 +312,20 @@ class AVSimulation:
                         color = random.choice(blueprint.get_attribute('color').recommended_values)
                         blueprint.set_attribute('color', color)
                     
-                    # Find an unused spawn point
-                    spawn_point = None
-                    for point in spawn_points:
-                        if point not in used_spawn_points:
-                            spawn_point = point
-                            break
-                    
-                    if spawn_point is None:
-                        logging.warning("No more available spawn points for vehicles")
-                        break
-                    
-                    vehicle = self.world.try_spawn_actor(blueprint, spawn_point)
+                    vehicle = self.world.try_spawn_actor(blueprint, random.choice(spawn_points))
                     if vehicle is not None:
-                        used_spawn_points.add(spawn_point)
-                        vehicle.set_autopilot(True)
+                        vehicle.set_autopilot(True, traffic_manager.get_port())
+                        # Set behavior parameters
+                        traffic_manager.update_vehicle_lights(vehicle, True)
+                        traffic_manager.distance_to_leading_vehicle(vehicle, 0.5)
+                        traffic_manager.vehicle_percentage_speed_difference(vehicle, random.uniform(-20, 10))
+                        
                         vehicles.append(vehicle)
                         self.active_actors.append(vehicle)
-                        
-                        # Add some randomization to vehicle behavior
-                        traffic_manager = self.client.get_trafficmanager()
-                        traffic_manager.global_percentage_speed_difference(random.uniform(-20, 10))
-                        traffic_manager.set_random_device_seed(random.randint(0, 1000))
-                        
                 except Exception as e:
                     logging.warning(f"Failed to spawn vehicle: {str(e)}")
                     continue
-            
+                
             logging.info(f"Successfully spawned {len(vehicles)} vehicles")
             
             # Spawn pedestrians with collision checking
@@ -474,12 +464,22 @@ class AVSimulation:
             logging.error(f"Error during cleanup: {str(e)}")
 
     def run_simulation(self, config_name, duration_seconds=60):
-        vehicle = None
-        sensors = []
-        traffic_vehicles = []
-        pedestrians = []
-
         try:
+            # Enable synchronous mode
+            settings = self.world.get_settings()
+            settings.synchronous_mode = True
+            settings.fixed_delta_seconds = 0.05  # 20 FPS
+            self.world.apply_settings(settings)
+            
+            # Setup traffic manager
+            traffic_manager = self.client.get_trafficmanager(8000)
+            traffic_manager.set_synchronous_mode(True)
+            
+            vehicle = None
+            sensors = []
+            traffic_vehicles = []
+            pedestrians = []
+
             # Set up weather
             weather = self.setup_weather()
             logging.info("Weather configured successfully")
@@ -532,42 +532,29 @@ class AVSimulation:
 
             while time.time() - start_time < duration_seconds:
                 try:
+                    # Tick the world
                     self.world.tick()
+                    
+                    # Visualize data
                     self.visualize_data()
-                    self.clock.tick(60)
+                    
                     frame_count += 1
-
+                    
                     # Process Pygame events
                     for event in pygame.event.get():
                         if event.type == pygame.QUIT:
                             return
-
-                    # Log progress every 5 seconds
-                    if frame_count % 300 == 0:  # Assuming 60 FPS
-                        elapsed = time.time() - start_time
-                        logging.info(f"Simulation running: {elapsed:.1f}s / {duration_seconds}s")
-
+                
                 except Exception as e:
                     logging.error(f"Error in simulation loop: {str(e)}")
                     break
-
-            # Export collected data
-            try:
-                output_dir = Path(f'output_{config_name}')
-                output_dir.mkdir(exist_ok=True, parents=True)
-                self.export_data(output_dir)
-                logging.info("Data export completed successfully")
-            except Exception as e:
-                logging.error(f"Failed to export data: {str(e)}")
-
-        except Exception as e:
-            logging.error(f"Simulation failed: {str(e)}")
-            traceback.print_exc()
-
+                
         finally:
-            logging.info("Cleaning up simulation...")
-            self.cleanup_actors()
-            pygame.quit()
+            # Disable synchronous mode when done
+            settings = self.world.get_settings()
+            settings.synchronous_mode = False
+            self.world.apply_settings(settings)
+
     def export_data(self, output_dir):
         """
         Export collected sensor data to the specified output directory.
@@ -690,92 +677,67 @@ class AVSimulation:
             logging.error(f"Error during data export: {str(e)}")
             raise SimulationError(f"Data export failed: {str(e)}")
     def visualize_data(self):
-        """
-        Visualize sensor data in real-time using Pygame.
-        """
         try:
-            surface = None
-            
             # Process camera image
             if not self.image_queue.empty():
                 frame, image = self.image_queue.get()
-                
-                # Convert numpy array to pygame surface
-                image = np.rot90(image)  # Rotate image to correct orientation
-                image = pygame.surfarray.make_surface(image)
-                
-                # Scale image to fit display if needed
-                display_size = self.display.get_size()
-                image_size = image.get_size()
-                
-                scale_factor = min(display_size[0] / image_size[0], 
-                                 display_size[1] * 0.7 / image_size[1])  # Leave space for LiDAR
-                
-                if scale_factor != 1:
-                    new_size = (int(image_size[0] * scale_factor), 
-                              int(image_size[1] * scale_factor))
-                    image = pygame.transform.scale(image, new_size)
-                
-                # Display camera image at the top
-                self.display.blit(image, (0, 0))
+                if not np.isnan(image).any():  # Check for NaN values
+                    image = np.rot90(image)
+                    image = pygame.surfarray.make_surface(image)
+                    self.display.blit(image, (0, 0))
             
-            # Process and visualize LiDAR data
+            # Process LiDAR data
             if not self.lidar_queue.empty():
                 frame, points = self.lidar_queue.get()
-                
-                # Create LiDAR visualization surface
                 lidar_surface = pygame.Surface((400, 400))
                 lidar_surface.fill((0, 0, 0))
                 
-                # Project points to 2D and colorize based on height
-                if points.size > 0:
-                    # Extract x, y coordinates and normalize
-                    points_2d = points[:, :2]  # Get x, y coordinates
-                    points_2d = points_2d * 10  # Scale for visibility
-                    points_2d += np.array([200, 200])  # Center in display
+                if points.size > 0 and not np.isnan(points).any():  # Check for NaN values
+                    points_2d = points[:, :2]
+                    points_2d = points_2d * 10
+                    points_2d += np.array([200, 200])
                     
-                    # Colorize based on height (z coordinate)
-                    heights = points[:, 2]
-                    normalized_heights = ((heights - heights.min()) / 
-                                       (heights.max() - heights.min() + 1e-6))
+                    # Remove any points outside the visible area
+                    mask = ((points_2d[:, 0] >= 0) & (points_2d[:, 0] < 400) & 
+                           (points_2d[:, 1] >= 0) & (points_2d[:, 1] < 400))
+                    points_2d = points_2d[mask]
                     
-                    # Draw points
-                    for i, (x, y) in enumerate(points_2d):
-                        if 0 <= x < 400 and 0 <= y < 400:
-                            # Color gradient from blue (low) to red (high)
-                            color = (int(255 * normalized_heights[i]),  # R
-                                   0,                                   # G
-                                   int(255 * (1 - normalized_heights[i])))  # B
-                            pygame.draw.circle(lidar_surface, color, (int(x), int(y)), 2)
+                    if points_2d.size > 0:
+                        heights = points[mask, 2]
+                        heights_norm = np.clip((heights - np.min(heights)) / 
+                                             (np.max(heights) - np.min(heights) + 1e-6), 0, 1)
+                        
+                        for i, (x, y) in enumerate(points_2d):
+                            try:
+                                color = (int(255 * heights_norm[i]), 0, 
+                                       int(255 * (1 - heights_norm[i])))
+                                pygame.draw.circle(lidar_surface, color, 
+                                                (int(x), int(y)), 2)
+                            except (ValueError, IndexError):
+                                continue
                 
-                # Display LiDAR visualization at the bottom
                 self.display.blit(lidar_surface, (0, self.display.get_height() - 400))
             
-            # Process and visualize radar data
+            # Process radar data
             if not self.radar_queue.empty():
                 frame, radar_data = self.radar_queue.get()
-                
-                # Create radar visualization surface
                 radar_surface = pygame.Surface((200, 200))
                 radar_surface.fill((0, 0, 0))
                 
-                if radar_data.size > 0:
-                    # Draw radar points
+                if radar_data.size > 0 and not np.isnan(radar_data).any():  # Check for NaN values
                     for detection in radar_data:
                         velocity, azimuth, altitude, depth = detection
-                        
-                        # Convert polar coordinates to Cartesian
-                        x = depth * math.cos(azimuth) * 2  # Scale for visibility
-                        y = depth * math.sin(azimuth) * 2
-                        
-                        # Center and scale coordinates
-                        screen_x = int(100 + x)
-                        screen_y = int(100 + y)
-                        
-                        if 0 <= screen_x < 200 and 0 <= screen_y < 200:
-                            # Color based on velocity (red for approaching, green for moving away)
-                            color = (255, 0, 0) if velocity < 0 else (0, 255, 0)
-                            pygame.draw.circle(radar_surface, color, (screen_x, screen_y), 3)
+                        if not any(np.isnan([velocity, azimuth, altitude, depth])):
+                            x = depth * math.cos(azimuth) * 2
+                            y = depth * math.sin(azimuth) * 2
+                            
+                            screen_x = int(100 + x)
+                            screen_y = int(100 + y)
+                            
+                            if 0 <= screen_x < 200 and 0 <= screen_y < 200:
+                                color = (255, 0, 0) if velocity < 0 else (0, 255, 0)
+                                pygame.draw.circle(radar_surface, color, 
+                                                (screen_x, screen_y), 3)
                 
                 # Display radar visualization in bottom-right corner
                 self.display.blit(radar_surface, (self.display.get_width() - 200, 
