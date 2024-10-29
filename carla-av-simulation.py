@@ -72,7 +72,7 @@ class AVSimulation:
                 ('sensor.other.radar', {
                     'horizontal_fov': '30',
                     'vertical_fov': '30',
-                    'points_per_second': '1500'
+                    'points_per_second': '1500',
 		    'range': '100'
                 }, carla.Transform(carla.Location(x=2.0, z=1.0)))
             ]),
