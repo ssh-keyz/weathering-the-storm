@@ -568,6 +568,127 @@ class AVSimulation:
             logging.info("Cleaning up simulation...")
             self.cleanup_actors()
             pygame.quit()
+    def export_data(self, output_dir):
+        """
+        Export collected sensor data to the specified output directory.
+        
+        Args:
+            output_dir (Path or str): Directory to save the exported data
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Ensure output directory exists
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Export metadata as JSON
+            try:
+                metadata = {
+                    'timestamp': timestamp,
+                    'weather_conditions': self.sensor_data['weather'],
+                    'num_frames': {
+                        'camera': len(self.sensor_data['camera']),
+                        'lidar': len(self.sensor_data['lidar']),
+                        'radar': len(self.sensor_data['radar']),
+                        'semantic': len(self.sensor_data['semantic']),
+                        'depth': len(self.sensor_data['depth'])
+                    }
+                }
+                
+                with open(output_dir / f'metadata_{timestamp}.json', 'w') as f:
+                    json.dump(metadata, f, indent=4)
+                logging.info("Metadata export completed")
+                
+            except Exception as e:
+                logging.error(f"Failed to export metadata: {str(e)}")
+            
+            # Export camera data (images)
+            if self.sensor_data['camera']:
+                try:
+                    camera_dir = output_dir / 'camera_data'
+                    camera_dir.mkdir(exist_ok=True)
+                    
+                    for idx, frame in enumerate(self.sensor_data['camera']):
+                        # Save as PNG to preserve quality
+                        img_path = camera_dir / f'frame_{idx:06d}.png'
+                        cv2.imwrite(str(img_path), cv2.cvtColor(frame['data'], cv2.COLOR_RGB2BGR))
+                    
+                    logging.info(f"Exported {len(self.sensor_data['camera'])} camera frames")
+                except Exception as e:
+                    logging.error(f"Failed to export camera data: {str(e)}")
+            
+            # Export LiDAR points
+            if self.sensor_data['lidar']:
+                try:
+                    lidar_data = {
+                        'timestamps': [frame['timestamp'] for frame in self.sensor_data['lidar']],
+                        'points': [frame['points'] for frame in self.sensor_data['lidar']],
+                        'transforms': [frame['transform'] for frame in self.sensor_data['lidar']]
+                    }
+                    
+                    with open(output_dir / f'lidar_data_{timestamp}.pkl', 'wb') as f:
+                        pickle.dump(lidar_data, f)
+                    logging.info(f"Exported {len(self.sensor_data['lidar'])} LiDAR frames")
+                except Exception as e:
+                    logging.error(f"Failed to export LiDAR data: {str(e)}")
+            
+            # Export radar data as CSV
+            if self.sensor_data['radar']:
+                try:
+                    radar_frames = []
+                    for frame in self.sensor_data['radar']:
+                        df = pd.DataFrame(
+                            frame['points'],
+                            columns=['velocity', 'azimuth', 'altitude', 'depth']
+                        )
+                        df['timestamp'] = frame['timestamp']
+                        df['frame'] = frame.get('frame', 0)
+                        radar_frames.append(df)
+                    
+                    if radar_frames:
+                        radar_df = pd.concat(radar_frames, ignore_index=True)
+                        radar_df.to_csv(output_dir / f'radar_data_{timestamp}.csv', index=False)
+                        logging.info(f"Exported {len(radar_frames)} radar frames")
+                except Exception as e:
+                    logging.error(f"Failed to export radar data: {str(e)}")
+            
+            # Export semantic segmentation data if available
+            if self.sensor_data['semantic']:
+                try:
+                    semantic_dir = output_dir / 'semantic_data'
+                    semantic_dir.mkdir(exist_ok=True)
+                    
+                    for idx, frame in enumerate(self.sensor_data['semantic']):
+                        semantic_path = semantic_dir / f'frame_{idx:06d}.png'
+                        cv2.imwrite(str(semantic_path), frame['data'])
+                    
+                    logging.info(f"Exported {len(self.sensor_data['semantic'])} semantic segmentation frames")
+                except Exception as e:
+                    logging.error(f"Failed to export semantic segmentation data: {str(e)}")
+            
+            # Export depth data if available
+            if self.sensor_data['depth']:
+                try:
+                    depth_dir = output_dir / 'depth_data'
+                    depth_dir.mkdir(exist_ok=True)
+                    
+                    for idx, frame in enumerate(self.sensor_data['depth']):
+                        depth_path = depth_dir / f'frame_{idx:06d}.png'
+                        # Normalize depth data for visualization
+                        depth_data = frame['data'].astype(np.float32)
+                        depth_data = cv2.normalize(depth_data, None, 0, 255, cv2.NORM_MINMAX)
+                        cv2.imwrite(str(depth_path), depth_data.astype(np.uint8))
+                    
+                    logging.info(f"Exported {len(self.sensor_data['depth'])} depth frames")
+                except Exception as e:
+                    logging.error(f"Failed to export depth data: {str(e)}")
+            
+            logging.info(f"Data export completed successfully to {output_dir}")
+            
+        except Exception as e:
+            logging.error(f"Error during data export: {str(e)}")
+            raise SimulationError(f"Data export failed: {str(e)}")
 
 def main():
     simulation = None
