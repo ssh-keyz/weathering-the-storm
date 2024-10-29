@@ -73,13 +73,164 @@ class AVSimulation:
             self.active_actors = []
 
             # Define sensor configurations (same as before)
-            self.sensor_configurations = {...}  # Your existing sensor configurations
+            self.define_sensor_configurations()
 
             logging.info("AVSimulation initialized successfully")
 
         except Exception as e:
             logging.error(f"Failed to initialize AVSimulation: {str(e)}")
             raise
+    def setup_sensors(self, vehicle, config_name):
+        """
+        Set up sensors based on the selected configuration.
+
+        Args:
+            vehicle: CARLA vehicle actor to attach sensors to
+            config_name: Name of sensor configuration to use ('minimal', 'standard', or 'advanced')
+        """
+        sensors = []
+        try:
+            if config_name not in self.sensor_configurations:
+                raise SimulationError(f"Invalid sensor configuration: {config_name}")
+
+            config = self.sensor_configurations[config_name]
+            logging.info(f"Setting up {config_name} sensor configuration")
+
+            for blueprint_name, attributes, transform in config.sensor_configurations[config_name].sensors_specs:
+                try:
+                    # Get the blueprint
+                    blueprint = self.world.get_blueprint_library().find(blueprint_name)
+                    if blueprint is None:
+                        raise SimulationError(f"Sensor blueprint not found: {blueprint_name}")
+
+                    # Set attributes
+                    for attr_name, attr_value in attributes.items():
+                        blueprint.set_attribute(attr_name, attr_value)
+
+                    # Spawn the sensor
+                    sensor = self.world.spawn_actor(
+                        blueprint,
+                        transform,
+                        attach_to=vehicle
+                    )
+
+                    if sensor is None:
+                        raise SimulationError(f"Failed to spawn sensor: {blueprint_name}")
+
+                    # Set up the appropriate callback
+                    if 'camera.rgb' in blueprint_name:
+                        sensor.listen(lambda data: self.sensor_callback(data, 'camera'))
+                        logging.info(f"RGB camera set up at location: {transform.location}")
+
+                    elif 'camera.semantic_segmentation' in blueprint_name:
+                        sensor.listen(lambda data: self.sensor_callback(data, 'semantic'))
+                        logging.info(f"Semantic segmentation camera set up at location: {transform.location}")
+
+                    elif 'camera.depth' in blueprint_name:
+                        sensor.listen(lambda data: self.sensor_callback(data, 'depth'))
+                        logging.info(f"Depth camera set up at location: {transform.location}")
+
+                    elif 'lidar' in blueprint_name:
+                        sensor.listen(lambda data: self.sensor_callback(data, 'lidar'))
+                        logging.info(f"LiDAR set up at location: {transform.location}")
+
+                    elif 'radar' in blueprint_name:
+                        sensor.listen(lambda data: self.sensor_callback(data, 'radar'))
+                        logging.info(f"Radar set up at location: {transform.location}")
+
+                    sensors.append(sensor)
+                    self.active_sensors.append(sensor)
+
+                except Exception as e:
+                    logging.error(f"Failed to set up sensor {blueprint_name}: {str(e)}")
+                    # Continue with other sensors even if one fails
+                    continue
+
+            if not sensors:
+                raise SimulationError("No sensors were successfully set up")
+
+            logging.info(f"Successfully set up {len(sensors)} sensors")
+            return sensors
+
+        except Exception as e:
+            logging.error(f"Error in setup_sensors: {str(e)}")
+            # Clean up any sensors that were created before the error
+            for sensor in sensors:
+                try:
+                    if sensor is not None and sensor.is_alive:
+                        sensor.destroy()
+                        logging.info(f"Cleaned up sensor after setup error: {sensor.type_id}")
+                except:
+                    pass
+            raise SimulationError(f"Sensor setup failed: {str(e)}")
+
+    def define_sensor_configurations(self):
+        """
+        Define the sensor configurations available in the simulation.
+        """
+        self.sensor_configurations = {
+            'minimal': SensorConfiguration('minimal', [
+                ('sensor.camera.rgb', {
+                    'image_size_x': '1920',
+                    'image_size_y': '1080',
+                    'fov': '90'
+                }, carla.Transform(carla.Location(x=2.0, z=1.4))),
+                ('sensor.lidar.ray_cast', {
+                    'channels': '32',
+                    'points_per_second': '100000',
+                    'rotation_frequency': '20',
+                    'range': '50'
+                }, carla.Transform(carla.Location(x=0, z=1.8)))
+            ]),
+
+            'standard': SensorConfiguration('standard', [
+                ('sensor.camera.rgb', {
+                    'image_size_x': '1920',
+                    'image_size_y': '1080',
+                    'fov': '90'
+                }, carla.Transform(carla.Location(x=2.0, z=1.4))),
+                ('sensor.lidar.ray_cast', {
+                    'channels': '64',
+                    'points_per_second': '200000',
+                    'rotation_frequency': '20',
+                    'range': '70'
+                }, carla.Transform(carla.Location(x=0, z=1.8))),
+                ('sensor.other.radar', {
+                    'horizontal_fov': '30',
+                    'vertical_fov': '30',
+                    'points_per_second': '1500',
+                    'range': '100'
+                }, carla.Transform(carla.Location(x=2.0, z=1.0)))
+            ]),
+
+            'advanced': SensorConfiguration('advanced', [
+                ('sensor.camera.rgb', {
+                    'image_size_x': '1920',
+                    'image_size_y': '1080',
+                    'fov': '90'
+                }, carla.Transform(carla.Location(x=2.0, z=1.4))),
+                ('sensor.camera.semantic_segmentation', {
+                    'image_size_x': '1920',
+                    'image_size_y': '1080'
+                }, carla.Transform(carla.Location(x=2.0, z=1.4))),
+                ('sensor.camera.depth', {
+                    'image_size_x': '1920',
+                    'image_size_y': '1080'
+                }, carla.Transform(carla.Location(x=2.0, z=1.4))),
+                ('sensor.lidar.ray_cast', {
+                    'channels': '128',
+                    'points_per_second': '500000',
+                    'rotation_frequency': '20',
+                    'range': '100'
+                }, carla.Transform(carla.Location(x=0, z=1.8))),
+                ('sensor.other.radar', {
+                    'horizontal_fov': '45',
+                    'vertical_fov': '45',
+                    'points_per_second': '2000',
+                    'range': '100'
+                }, carla.Transform(carla.Location(x=2.0, z=1.0)))
+            ])
+        }
     def setup_weather(self):
         try:
             # Set up rainy weather conditions
