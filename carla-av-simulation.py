@@ -138,10 +138,9 @@ class AVSimulation:
         # Set up pedestrian AI controllers
         controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
         for pedestrian in pedestrians:
-            controller = self.world.spawn_actor(controller_bp, carla.Transform(), pedestrian)
-            controller.start()
-            controller.go_to_location(self.world.get_random_location_from_navigation())
-        
+       		controller = self.world.spawn_actor(controller_bp, carla.Transform(), attach_to=pedestrian)
+		controller.start()
+		controller.set_max_speed(1.4) 
         return vehicles, pedestrians
 
     def setup_weather(self):
